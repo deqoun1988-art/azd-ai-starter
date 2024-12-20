@@ -13,8 +13,13 @@ param location string
 param resourceGroupName string = ''
 @description('The Open AI resource name. If ommited will be generated')
 param openAiName string = ''
+//@description('The Url of the provisioned frontend app or localhost')
+//param frontendUrl string = ''
+@description('The static web app resource name. If ommited will be generated')
+param frontendAppName string = ''
 
 param createRoleForUser bool = true
+param deployExampleStaticFrontend bool = true
 
 var aiConfig = loadYamlContent('./ai.yaml')
 
@@ -53,9 +58,23 @@ module userRoleDataScientist 'core/security/role.bicep' =  if (createRoleForUser
   }
 }
 
+// The application optional frontend used for tests
+module frontendApp './core/host/staticwebapp.bicep' = if (deployExampleStaticFrontend) {
+  name: 'frontendapp'
+  scope: rg
+  params: {
+    name: !empty(frontendAppName) ? frontendAppName : '${abbrs.webStaticSites}web-${resourceToken}'
+    location: location
+    tags: union(tags, { 'azd-service-name': frontendAppName })
+  }
+}
+
 // output the names of the resources
 output AZURE_TENANT_ID string = tenant().tenantId
 output AZURE_RESOURCE_GROUP string = rg.name
 
 output AZURE_OPENAI_NAME string = cognitiveServices.outputs.name
 output AZURE_OPENAI_ENDPOINT string = cognitiveServices.outputs.endpoints['OpenAI Language Model Instance API']
+
+// output the frontend app URI
+output FRONTEND_URI string = frontendApp.outputs.uri

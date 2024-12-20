@@ -8,3 +8,6 @@
 # other env variable definitions
 .env
 *.env
+
+# node.js
+node_modules

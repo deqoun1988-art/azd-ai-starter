@@ -1,0 +1,17 @@
+{
+  "name": "azd-ai-starter",
+  "version": "1.0.0",
+  "description": "Azure Developer CLI AI Template Starter",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "npx playwright install && npx playwright test"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.49.1"
+  }
+}

@@ -15,3 +15,21 @@ hooks:
     posix:
       shell: sh
       run: ./hooks/postprovision.sh
+services:
+  frontendapp:
+    project: ./src/template-framework-docs
+    dist: dist
+    language: js
+    host: staticwebapp
+    hooks:
+      preup:
+        windows:
+          shell: pwsh
+          run: npm install; npm run build
+          interactive: false
+          continueOnError: false
+        posix:
+          shell: sh
+          run: npm install && npm run build
+          interactive: false
+          continueOnError: false
