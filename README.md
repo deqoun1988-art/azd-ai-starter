@@ -43,6 +43,8 @@ This project framework provides the following features:
 
 Include a diagram describing the application. You can take [this image](https://raw.githubusercontent.com/Azure-Samples/serverless-chat-langchainjs/main/docs/images/architecture.drawio.png) as a reference.
 
+- `AZURE_OPENAI_NAME` - The name of the Azure OpenAI service
+
 ### Demo Video (optional)
 
 (Embed demo video here)
