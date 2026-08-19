@@ -16,62 +16,72 @@ set -u
 
 get_quotas() {
     local fetched_quotas_table=("location,Model,Available Version,Remaining Quotas,Total Quotas")
-    
+
     for location in "${locations[@]}"; do
         echo "Fetching quotas for location $location..." >&2
-        
-        local usages=$(az cognitiveservices usage list --location $location --query "[].{name: name.value, currentValue: currentValue, limit: limit}" -o tsv)
-        local models=$(az cognitiveservices model list --location $location --query "[].{name: model.name, sku: model.skus[0].name, kind: kind, version: model.version}" -o tsv)
-        
-        IFS=$'\n'
-        for usage in $usages; do
-            local model_fullname=$(echo $usage | cut -f1)
-            local current_value=$(echo $usage | cut -f2)
-            local limit=$(echo $usage | cut -f3)
-            
+
+        local usages
+        local models
+        usages=$(az cognitiveservices usage list --location "$location" --query "[].{name: name.value, currentValue: currentValue, limit: limit}" -o tsv)
+        models=$(az cognitiveservices model list --location "$location" --query "[].{name: model.name, sku: model.skus[0].name, kind: kind, version: model.version}" -o tsv)
+
+        if [ -z "$usages" ] || [ -z "$models" ]; then
+            continue
+        fi
+
+        declare -A model_versions_map=()
+        while IFS=$'\t' read -r model_name sku kind version; do
+            [ -z "$model_name" ] && continue
+            local key="${kind}.${sku}.${model_name}"
+            if [ -n "${model_versions_map[$key]:-}" ]; then
+                model_versions_map["$key"]+=$';'"$version"
+            else
+                model_versions_map["$key"]="$version"
+            fi
+        done <<< "$models"
+
+        while IFS=$'\t' read -r model_fullname current_value limit; do
+            [ -z "$model_fullname" ] && continue
+
             for candidate in "${candidate_models[@]}"; do
                 if [[ "$candidate" == *":"* ]]; then
-                    # If candidate contains ":", split it into candidate_model and versions
                     candidate_model_name="${candidate%%:*}"
                     versions="${candidate#*:}"
                 else
-                    # If candidate does not contain ":", set candidate_model to candidate and versions to "*"
                     candidate_model_name="$candidate"
                     versions="*"
                 fi
-                
-                if [[ $candidate_model_name != $model_fullname ]]; then
+
+                if [[ "$candidate_model_name" != "$model_fullname" ]]; then
                     continue
                 fi
-                
-                # Find the candidate model in the list of models and get the available versions
-                available_versions=()
-                for model in $models; do
-                    local model_name=$(echo $model | cut -f1)
-                    local sku=$(echo $model | cut -f2)
-                    local kind=$(echo $model | cut -f3)
-                    local version=$(echo $model | cut -f4)
-                    if [[  $model_fullname == "$kind.$sku.$model_name" ]]; then
-                        if [[ "$versions" == *"*"* ]] || echo "$versions" | grep -q -w "$version"; then
+
+                local available_versions=()
+                local version_csv="${model_versions_map[$model_fullname]:-}"
+                if [ -z "$version_csv" ]; then
+                    break
+                fi
+
+                if [[ "$versions" == "*" ]]; then
+                    IFS=$';' read -ra available_versions <<< "$version_csv"
+                else
+                    IFS=',' read -ra requested_versions <<< "$versions"
+                    for version in "${requested_versions[@]}"; do
+                        if [[ "$version_csv" == *"$version"* ]]; then
                             available_versions+=("$version")
                         fi
-                    fi
-                done
-                
-                # Skip if no available versions
-                if [ ${#available_versions[@]} -eq 0 ]; then
-                    continue
+                    done
                 fi
-                
-                available_versions_str=$(printf "; %s" "${available_versions[@]}")
-                available_versions_str=${available_versions_str:1}
-                fetched_quotas_table+=("$location,$model_fullname,$available_versions_str,$(echo "$limit - $current_value" | bc),$limit")
 
-                # skip the rest of the candidate_models
+                if [ ${#available_versions[@]} -eq 0 ]; then
+                    break
+                fi
+
+                available_versions_str=$(IFS=', '; echo "${available_versions[*]}")
+                fetched_quotas_table+=("$location,$model_fullname,$available_versions_str,$((limit - current_value)),$limit")
                 break
             done
-        done
-        unset IFS
+        done <<< "$usages"
     done
 
     if [ ${#fetched_quotas_table[@]} -eq 1 ]; then
@@ -159,6 +169,6 @@ quotas=$(get_quotas)
 printf "%s\n" "${quotas[@]}" | column -s, -t
 
 # Switch back to the original subscription if we switched
-if [ -n "$switched_subscription" ]; then
+if [ "$switched_subscription" = true ]; then
     az account set --subscription "$original_subscription"
 fi

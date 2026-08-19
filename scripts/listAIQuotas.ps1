@@ -45,46 +45,52 @@ function Get-Quotas() {
     foreach ($location in $locations) {
         Write-Host "Fetching quotas for location $location..."
         try {
-            $usages = (az cognitiveservices usage list --location $location) | ConvertFrom-Json
-            $models = (az cognitiveservices model list --location $location) | ConvertFrom-Json
+            $usages = (az cognitiveservices usage list --location $location --query "[].{name: name.value, currentValue: currentValue, limit: limit}" -o json | ConvertFrom-Json)
+            $models = (az cognitiveservices model list --location $location --query "[].{name: model.name, sku: model.skus[0].name, kind: kind, version: model.version}" -o json | ConvertFrom-Json)
         }
         catch {
             Write-Host "Failed to fetch quotas for location $location : $_"
             break
         }
 
+        $modelVersionsByKey = @{}
+        foreach ($model in $models) {
+            $key = "$($model.kind).$($model.sku).$($model.name)"
+            if (-not $modelVersionsByKey.ContainsKey($key)) {
+                $modelVersionsByKey[$key] = [System.Collections.Generic.HashSet[string]]::new()
+            }
+            [void]$modelVersionsByKey[$key].Add([string]$model.version)
+        }
+
         foreach ($usage in $usages) {
-            $modelName = $usage.name.value
-            # continue if kind.sku.name not in cadidate_models
-            $candidate = $candidate_models | Where-Object { $modelName -eq $_.kind + "." + $_.sku + "." + $_.name }
-            if (!$candidate) {
-                continue
-            }
-
-            # Find the candidate model in the list of models and get the available versions
-            $available_versions = @()
-            $models | ForEach-Object {
-                $model = $_
-                $skuMatch = $model.model.skus | Where-Object { $_.name -eq $candidate.sku }
-                if ($model.model.name -eq $candidate.name -and $model.kind -eq $candidate.kind -and $skuMatch) {
-                    if ($candidate.versions -contains '*' -or $candidate.versions -contains $model.model.version) {
-                        $available_versions += $model.model.version
-                    }
+            $modelKey = $usage.name
+            foreach ($candidate in $candidate_models) {
+                $candidateKey = "$($candidate.kind).$($candidate.sku).$($candidate.name)"
+                if ($modelKey -ne $candidateKey) {
+                    continue
                 }
-            }
-            # Skip if no available versions
-            if ($available_versions.Count -eq 0) {
-                continue
-            }
 
-            $currentValue = $usage.currentValue
-            $limit = $usage.limit
-            $fetched_quotas_table += [PSCustomObject]@{
-                "Location"           = $location
-                "Model"              = "$($candidate.kind).$($candidate.sku).$($candidate.name)"
-                "Available Versions" = $available_versions -join ", "
-                "Remaining Quotas"   = $($limit - $currentValue).ToString()
-                "Total Quotas"       = $limit.ToString()
+                $availableVersions = @()
+                if ($modelVersionsByKey.ContainsKey($candidateKey)) {
+                    $availableVersions = @($modelVersionsByKey[$candidateKey] | Where-Object {
+                        $candidate.versions -contains '*' -or $candidate.versions -contains $_
+                    })
+                }
+
+                if ($availableVersions.Count -eq 0) {
+                    continue
+                }
+
+                $currentValue = $usage.currentValue
+                $limit = $usage.limit
+                $fetched_quotas_table += [PSCustomObject]@{
+                    "Location"           = $location
+                    "Model"              = $candidateKey
+                    "Available Versions" = ($availableVersions | Select-Object -Unique) -join ", "
+                    "Remaining Quotas"   = ($limit - $currentValue).ToString()
+                    "Total Quotas"       = $limit.ToString()
+                }
+                break
             }
         }
     }
